@@ -1,6 +1,13 @@
-def selamla(isim):
-    return f"Merhaba {isim}, ilk projen başladı!"
+from fastapi import FastAPI
+
+app = FastAPI()
 
 
-if __name__ == "__main__":
-    print(selamla("Nisa"))
+@app.get("/")
+def ana_sayfa():
+    return {"mesaj": "RAG belge sistemi calisiyor!"}
+
+
+@app.get("/saglik")
+def saglik_kontrolu():
+    return {"durum": "iyi"}
