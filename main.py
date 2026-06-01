@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer, util
+from sentence_transformers import SentenceTransformer
+import chromadb
 
 app = FastAPI()
 
@@ -8,7 +9,10 @@ print("Embedding modeli yukleniyor...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 print("Model hazir!")
 
-belgeler = []
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+koleksiyon = chroma_client.get_or_create_collection(name="belgeler")
+
+sayac = koleksiyon.count()
 
 
 class Belge(BaseModel):
@@ -39,51 +43,58 @@ def ana_sayfa():
 
 @app.get("/saglik")
 def saglik_kontrolu():
-    return {"durum": "iyi"}
+    return {"durum": "iyi", "kayitli_parca_sayisi": koleksiyon.count()}
 
 
 @app.post("/belge-ekle")
 def belge_ekle(belge: Belge):
+    global sayac
     parcalar = metni_parcala(belge.icerik)
-    parca_vektorleri = model.encode(parcalar)
-    for i, parca in enumerate(parcalar):
-        belgeler.append({
-            "baslik": belge.baslik,
-            "parca": parca,
-            "vektor": parca_vektorleri[i],
-        })
+    parca_vektorleri = model.encode(parcalar).tolist()
+
+    id_listesi = []
+    metadata_listesi = []
+    for parca in parcalar:
+        id_listesi.append(f"parca_{sayac}")
+        metadata_listesi.append({"baslik": belge.baslik})
+        sayac += 1
+
+    koleksiyon.add(
+        ids=id_listesi,
+        embeddings=parca_vektorleri,
+        documents=parcalar,
+        metadatas=metadata_listesi,
+    )
+
     return {
-        "mesaj": "Belge eklendi, parcalandi ve vektorlere cevrildi",
-        "toplam_parca": len(belgeler),
+        "mesaj": "Belge eklendi ve ChromaDB'ye kaydedildi",
         "bu_belgenin_parca_sayisi": len(parcalar),
+        "toplam_parca": koleksiyon.count(),
     }
-
-
-@app.get("/belgeler")
-def belgeleri_listele():
-    sonuc = [{"baslik": b["baslik"], "parca": b["parca"]} for b in belgeler]
-    return {"toplam": len(belgeler), "parcalar": sonuc}
 
 
 @app.post("/sorgula")
 def sorgula(istek: Soru):
-    if not belgeler:
+    if koleksiyon.count() == 0:
         return {"mesaj": "Henuz belge eklenmemis. Once belge ekleyin."}
 
-    soru_vektoru = model.encode(istek.soru)
+    soru_vektoru = model.encode(istek.soru).tolist()
 
-    sonuclar = []
-    for parca_kaydi in belgeler:
-        benzerlik = util.cos_sim(soru_vektoru, parca_kaydi["vektor"]).item()
-        sonuclar.append({
-            "baslik": parca_kaydi["baslik"],
-            "parca": parca_kaydi["parca"],
-            "benzerlik": round(benzerlik, 3),
+    sonuc = koleksiyon.query(
+        query_embeddings=[soru_vektoru],
+        n_results=istek.kac_sonuc,
+    )
+
+    parcalar = sonuc["documents"][0]
+    mesafeler = sonuc["distances"][0]
+    basliklar = [m["baslik"] for m in sonuc["metadatas"][0]]
+
+    en_alakali = []
+    for i in range(len(parcalar)):
+        en_alakali.append({
+            "baslik": basliklar[i],
+            "parca": parcalar[i],
+            "mesafe": round(mesafeler[i], 3),
         })
 
-    sonuclar.sort(key=lambda x: x["benzerlik"], reverse=True)
-
-    return {
-        "soru": istek.soru,
-        "en_alakali_parcalar": sonuclar[:istek.kac_sonuc],
-    }
+    return {"soru": istek.soru, "en_alakali_parcalar": en_alakali}
