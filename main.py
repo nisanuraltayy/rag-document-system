@@ -2,6 +2,12 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import chromadb
+from google import genai
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
 
@@ -86,15 +92,26 @@ def sorgula(istek: Soru):
     )
 
     parcalar = sonuc["documents"][0]
-    mesafeler = sonuc["distances"][0]
-    basliklar = [m["baslik"] for m in sonuc["metadatas"][0]]
+    baglam = "\n\n".join(parcalar)
 
-    en_alakali = []
-    for i in range(len(parcalar)):
-        en_alakali.append({
-            "baslik": basliklar[i],
-            "parca": parcalar[i],
-            "mesafe": round(mesafeler[i], 3),
-        })
+    prompt = f"""Asagidaki baglam bilgisini kullanarak soruyu cevapla.
+Sadece baglamda verilen bilgilere dayan. Baglamda cevap yoksa
+"Bu bilgi belgede bulunmuyor." de.
 
-    return {"soru": istek.soru, "en_alakali_parcalar": en_alakali}
+BAGLAM:
+{baglam}
+
+SORU: {istek.soru}
+
+CEVAP:"""
+
+    yanit = client.models.generate_content(
+        model="gemini-flash-latest",
+        contents=prompt,
+    )
+
+    return {
+        "soru": istek.soru,
+        "cevap": yanit.text,
+        "kullanilan_parcalar": parcalar,
+    }
