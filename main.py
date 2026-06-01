@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import chromadb
@@ -78,7 +78,35 @@ def belge_ekle(belge: Belge):
         "toplam_parca": koleksiyon.count(),
     }
 
+@app.post("/dosya-yukle")
+def dosya_yukle(dosya: UploadFile = File(...)):
+    global sayac
 
+    icerik_bytes = dosya.file.read()
+    metin = icerik_bytes.decode("utf-8")
+
+    parcalar = metni_parcala(metin)
+    parca_vektorleri = model.encode(parcalar).tolist()
+
+    id_listesi = []
+    metadata_listesi = []
+    for parca in parcalar:
+        id_listesi.append(f"parca_{sayac}")
+        metadata_listesi.append({"baslik": dosya.filename})
+        sayac += 1
+
+    koleksiyon.add(
+        ids=id_listesi,
+        embeddings=parca_vektorleri,
+        documents=parcalar,
+        metadatas=metadata_listesi,
+    )
+
+    return {
+        "mesaj": f"'{dosya.filename}' dosyasi yuklendi ve islendi",
+        "bu_dosyanin_parca_sayisi": len(parcalar),
+        "toplam_parca": koleksiyon.count(),
+    }
 @app.post("/sorgula")
 def sorgula(istek: Soru):
     if koleksiyon.count() == 0:
