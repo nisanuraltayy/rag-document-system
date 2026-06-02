@@ -1,4 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Depends
+from pypdf import PdfReader
+from io import BytesIO
 from pydantic import BaseModel
 import chromadb
 from google import genai
@@ -20,15 +22,18 @@ class Belge(BaseModel):
     baslik: str
     icerik: str
 
+
+class Soru(BaseModel):
+    soru: str
+    kac_sonuc: int = 3
+
+
 def get_koleksiyon():
     return koleksiyon
 
 
 def get_llm_client():
     return client
-class Soru(BaseModel):
-    soru: str
-    kac_sonuc: int = 3
 
 
 def metni_parcala(metin: str, parca_boyutu: int = 200, ortusme: int = 50):
@@ -119,6 +124,52 @@ def dosya_yukle(
     return {
         "mesaj": f"'{dosya.filename}' dosyasi yuklendi ve islendi",
         "bu_dosyanin_parca_sayisi": len(parcalar),
+        "toplam_parca": koleksiyon.count(),
+    }
+
+
+@app.post("/pdf-yukle")
+def pdf_yukle(
+    dosya: UploadFile = File(...),
+    koleksiyon = Depends(get_koleksiyon),
+):
+    global sayac
+
+    pdf_bytes = dosya.file.read()
+    try:
+        pdf_okuyucu = PdfReader(BytesIO(pdf_bytes))
+    except Exception:
+        return {"hata": "Gecerli bir PDF dosyasi yukleyin. Dosya bozuk, bos veya PDF formatinda degil."}
+
+    metin = ""
+    for sayfa in pdf_okuyucu.pages:
+        metin += sayfa.extract_text() + "\n"
+
+
+    if not metin.strip():
+        return {"mesaj": "PDF'ten metin cikarilamadi. Taranmis bir PDF olabilir."}
+
+    parcalar = metni_parcala(metin)
+    parca_vektorleri = embedding_uret(parcalar)
+
+    id_listesi = []
+    metadata_listesi = []
+    for parca in parcalar:
+        id_listesi.append(f"parca_{sayac}")
+        metadata_listesi.append({"baslik": dosya.filename})
+        sayac += 1
+
+    koleksiyon.add(
+        ids=id_listesi,
+        embeddings=parca_vektorleri,
+        documents=parcalar,
+        metadatas=metadata_listesi,
+    )
+
+    return {
+        "mesaj": f"'{dosya.filename}' PDF'i yuklendi ve islendi",
+        "sayfa_sayisi": len(pdf_okuyucu.pages),
+        "bu_pdfin_parca_sayisi": len(parcalar),
         "toplam_parca": koleksiyon.count(),
     }
 
