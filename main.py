@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Depends
 from pydantic import BaseModel
 import chromadb
 from google import genai
@@ -20,7 +20,12 @@ class Belge(BaseModel):
     baslik: str
     icerik: str
 
+def get_koleksiyon():
+    return koleksiyon
 
+
+def get_llm_client():
+    return client
 class Soru(BaseModel):
     soru: str
     kac_sonuc: int = 3
@@ -56,7 +61,10 @@ def saglik_kontrolu():
 
 
 @app.post("/belge-ekle")
-def belge_ekle(belge: Belge):
+def belge_ekle(
+    belge: Belge,
+    koleksiyon = Depends(get_koleksiyon),
+):
     global sayac
     parcalar = metni_parcala(belge.icerik)
     parca_vektorleri = embedding_uret(parcalar)
@@ -83,7 +91,10 @@ def belge_ekle(belge: Belge):
 
 
 @app.post("/dosya-yukle")
-def dosya_yukle(dosya: UploadFile = File(...)):
+def dosya_yukle(
+    dosya: UploadFile = File(...),
+    koleksiyon = Depends(get_koleksiyon),
+):
     global sayac
     icerik_bytes = dosya.file.read()
     metin = icerik_bytes.decode("utf-8")
@@ -113,7 +124,11 @@ def dosya_yukle(dosya: UploadFile = File(...)):
 
 
 @app.post("/sorgula")
-def sorgula(istek: Soru):
+def sorgula(
+    istek: Soru,
+    koleksiyon = Depends(get_koleksiyon),
+    client = Depends(get_llm_client),
+):
     if koleksiyon.count() == 0:
         return {"mesaj": "Henuz belge eklenmemis. Once belge ekleyin."}
 
