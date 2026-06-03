@@ -6,6 +6,8 @@ import chromadb
 from google import genai
 from dotenv import load_dotenv
 import os
+from sqlalchemy.orm import Session
+from database import get_db, BelgeKaydi
 
 load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -65,10 +67,40 @@ def saglik_kontrolu():
     return {"durum": "iyi", "kayitli_parca_sayisi": koleksiyon.count()}
 
 
+@app.get("/belgeler")
+def belgeleri_listele(
+    tur: str | None = None,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+):
+    sorgu = db.query(BelgeKaydi)
+
+    if tur:
+        sorgu = sorgu.filter(BelgeKaydi.tur == tur)
+
+    sorgu = sorgu.order_by(BelgeKaydi.yukleme_tarihi.desc()).limit(limit)
+    kayitlar = sorgu.all()
+
+    return {
+        "toplam_donen": len(kayitlar),
+        "belgeler": [
+            {
+                "id": k.id,
+                "dosya_adi": k.dosya_adi,
+                "tur": k.tur,
+                "parca_sayisi": k.parca_sayisi,
+                "yukleme_tarihi": k.yukleme_tarihi.isoformat(),
+            }
+            for k in kayitlar
+        ],
+    }
+
+
 @app.post("/belge-ekle")
 def belge_ekle(
     belge: Belge,
     koleksiyon = Depends(get_koleksiyon),
+    db: Session = Depends(get_db),
 ):
     global sayac
     parcalar = metni_parcala(belge.icerik)
@@ -88,10 +120,20 @@ def belge_ekle(
         metadatas=metadata_listesi,
     )
 
+    yeni_kayit = BelgeKaydi(
+        dosya_adi=belge.baslik,
+        tur="metin",
+        parca_sayisi=len(parcalar),
+    )
+    db.add(yeni_kayit)
+    db.commit()
+    db.refresh(yeni_kayit)
+
     return {
         "mesaj": "Belge eklendi ve ChromaDB'ye kaydedildi",
         "bu_belgenin_parca_sayisi": len(parcalar),
         "toplam_parca": koleksiyon.count(),
+        "belge_id": yeni_kayit.id,
     }
 
 
@@ -99,6 +141,7 @@ def belge_ekle(
 def dosya_yukle(
     dosya: UploadFile = File(...),
     koleksiyon = Depends(get_koleksiyon),
+    db: Session = Depends(get_db),
 ):
     global sayac
     icerik_bytes = dosya.file.read()
@@ -121,10 +164,20 @@ def dosya_yukle(
         metadatas=metadata_listesi,
     )
 
+    yeni_kayit = BelgeKaydi(
+        dosya_adi=dosya.filename,
+        tur="txt",
+        parca_sayisi=len(parcalar),
+    )
+    db.add(yeni_kayit)
+    db.commit()
+    db.refresh(yeni_kayit)
+
     return {
         "mesaj": f"'{dosya.filename}' dosyasi yuklendi ve islendi",
         "bu_dosyanin_parca_sayisi": len(parcalar),
         "toplam_parca": koleksiyon.count(),
+        "belge_id": yeni_kayit.id,
     }
 
 
@@ -132,6 +185,7 @@ def dosya_yukle(
 def pdf_yukle(
     dosya: UploadFile = File(...),
     koleksiyon = Depends(get_koleksiyon),
+    db: Session = Depends(get_db),
 ):
     global sayac
 
@@ -144,7 +198,6 @@ def pdf_yukle(
     metin = ""
     for sayfa in pdf_okuyucu.pages:
         metin += sayfa.extract_text() + "\n"
-
 
     if not metin.strip():
         return {"mesaj": "PDF'ten metin cikarilamadi. Taranmis bir PDF olabilir."}
@@ -166,11 +219,21 @@ def pdf_yukle(
         metadatas=metadata_listesi,
     )
 
+    yeni_kayit = BelgeKaydi(
+        dosya_adi=dosya.filename,
+        tur="pdf",
+        parca_sayisi=len(parcalar),
+    )
+    db.add(yeni_kayit)
+    db.commit()
+    db.refresh(yeni_kayit)
+
     return {
         "mesaj": f"'{dosya.filename}' PDF'i yuklendi ve islendi",
         "sayfa_sayisi": len(pdf_okuyucu.pages),
         "bu_pdfin_parca_sayisi": len(parcalar),
         "toplam_parca": koleksiyon.count(),
+        "belge_id": yeni_kayit.id,
     }
 
 
