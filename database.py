@@ -23,6 +23,7 @@ class BelgeKaydi(Base):
     tur = Column(String(50), nullable=False)
     parca_sayisi = Column(Integer, nullable=False)
     yukleme_tarihi = Column(DateTime, default=datetime.utcnow)
+    boyut_kb = Column(Integer, nullable=True)
 
 
 def get_db():
