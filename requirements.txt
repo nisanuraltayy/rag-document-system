@@ -7,3 +7,6 @@ chromadb
 google-genai
 gunicorn
 pypdf
+alembic
+sqlalchemy
+psycopg2-binary
